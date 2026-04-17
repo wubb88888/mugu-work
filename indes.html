@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>模Gu模Gu班表 - 雲端真同步版</title>
+    <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-database-compat.js"></script>
+    <style>
+        :root {
+            --bg-dark: #1a1a1a;
+            --paper-dark: #2d2d2d;
+            --carle-red: #d32f2f;
+            --carle-green: #43a047;
+            --text-light: #e0e0e0;
+        }
+        body { 
+            background: var(--bg-dark); 
+            font-family: "PingFang TC", "Noto Sans TC", sans-serif; 
+            margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; 
+            color: var(--text-light);
+        }
+        
+        .admin-panel { 
+            background: var(--paper-dark); border-radius: 20px;
+            padding: 25px; width: 95%; max-width: 1000px; margin-bottom: 30px;
+            border-left: 10px solid var(--carle-green);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .admin-panel h2 { margin-top: 0; color: var(--carle-red); letter-spacing: 2px; }
+        .sync-status { font-size: 14px; color: #fdd835; margin-bottom: 10px; font-weight: bold; }
+        
+        #staffList { margin-top: 15px; display: flex; flex-wrap: wrap; gap: 8px; }
+        .staff-chip { 
+            background: #444; color: #fff; padding: 5px 12px; border-radius: 15px; 
+            font-size: 14px; border-width: 1px; border-style: solid;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .del-btn { cursor: pointer; color: #888; font-weight: bold; font-size: 16px; }
+        .del-btn:hover { color: var(--carle-red); }
+
+        input, select, button { 
+            background: #444; color: white; padding: 12px; font-size: 18px; 
+            border-radius: 10px; border: 1px solid #555; outline: none;
+        }
+        button { background: var(--carle-red); border: none; cursor: pointer; font-weight: bold; }
+
+        #scheduleContainer { 
+            background: var(--paper-dark); border-radius: 30px; padding: 40px; 
+            width: 1100px; box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+            border: 1px solid #444; position: relative;
+        }
+        .mugu-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 30px; }
+        .mugu-logo h1 { font-size: 45px; margin: 0; font-weight: 300; letter-spacing: 5px; }
+
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; }
+        .weekday { text-align: center; font-weight: bold; font-size: 18px; padding: 15px; color: #888; border-bottom: 1px solid #444; }
+        
+        .day-box { 
+            background: rgba(255,255,255,0.02); border: 1px solid #444; border-radius: 15px; 
+            min-height: 250px; padding: 12px; display: flex; flex-direction: column;
+        }
+        .day-num { text-align: right; font-size: 28px; font-weight: 200; color: var(--carle-green); margin-bottom: 10px; }
+
+        .slot { width: 100%; margin-bottom: 15px; }
+        .ui-select, .ui-input { 
+            width: 100%; height: 42px; font-size: 16px; text-align: center; 
+            background: rgba(0,0,0,0.3); border: 1px solid #555; border-radius: 8px; 
+            color: #ccc; box-sizing: border-box; margin-bottom: 3px;
+        }
+
+        #saveBtn { 
+            background: linear-gradient(135deg, var(--carle-red), #8a1a1d);
+            padding: 20px 100px; font-size: 28px; border-radius: 50px; 
+            color: white; border: none; cursor: pointer; margin-top: 50px; font-weight: bold;
+        }
+        canvas { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="admin-panel">
+    <h2>模Gu模Gu 控制台</h2>
+    <div id="status" class="sync-status">📡 正在連線雲端資料庫...</div>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
+        <input type="text" id="nameIn" placeholder="輸入夥伴姓名">
+        <button onclick="addStaff()">＋ 加入名單</button>
+        <span style="margin-left:20px;">月份：</span>
+        <input type="month" id="monthPicker" onchange="render()">
+    </div>
+    <div id="staffList"></div>
+</div>
+
+<div id="scheduleContainer">
+    <div class="mugu-logo">
+        <div style="width:30px; height:30px; background:var(--carle-red); border-radius:50%;"></div>
+        <h1 id="displayTitle">模Gu模Gu班表</h1>
+    </div>
+
+    <div class="calendar-grid">
+        <div class="weekday">MON 一</div><div class="weekday">TUE 二</div><div class="weekday">WED 三</div>
+        <div class="weekday">THU 四</div><div class="weekday">FRI 五</div><div class="weekday" style="color:var(--carle-green)">SAT 六</div>
+        <div class="weekday" style="color:var(--carle-red)">SUN 日</div>
+    </div>
+    <div class="calendar-grid" id="grid"></div>
+</div>
+
+<button id="saveBtn" onclick="drawAndSave()">📸 存成排班圖片</button>
+<canvas id="exportCanvas"></canvas>
+
+<script>
+    // 🎨 1. Firebase 配置 (已補上 databaseURL)
+    const firebaseConfig = {
+        apiKey: "AIzaSyC4SudFqLXD_FenZ78-2AVGlVudFbPnPCo",
+        authDomain: "mugu-schedule.firebaseapp.com",
+        databaseURL: "https://mugu-schedule-default-rtdb.firebaseio.com/", 
+        projectId: "mugu-schedule",
+        storageBucket: "mugu-schedule.firebasestorage.app",
+        messagingSenderId: "859437139914",
+        appId: "1:859437139914:web:cb3802f56361a62a56f133",
+        measurementId: "G-8E6RCZ4ZV8"
+    };
+
+    // 初始化 Firebase
+    if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
+    }
+    const dbRef = firebase.database().ref('mugu_schedule');
+
+    const colorPool = ["#8BC34A", "#03A9F4", "#FF9800", "#9C27B0", "#009688", "#FFEB3B", "#795548", "#E91E63", "#607D8B", "#CDDC39"];
+    
+    let staffs = [];
+    let scheduleData = {};
+
+    // 📡 監聽雲端資料
+    dbRef.on('value', (snapshot) => {
+        const data = snapshot.val();
+        document.getElementById('status').innerText = data ? "✅ 雲端同步中" : "🆕 雲端尚無資料，請開始排班";
+        if (data) {
+            staffs = data.staffs || [];
+            scheduleData = data.scheduleData || {};
+            updateStaffDisplay();
+            render();
+        }
+    }, (error) => {
+        document.getElementById('status').innerText = "❌ 連線失敗：請檢查 Firebase 規則是否開啟";
+        console.error(error);
+    });
+
+    function addStaff() {
+        let n = document.getElementById('nameIn').value.trim();
+        if(n && !staffs.includes(n)) {
+            staffs.push(n);
+            syncToCloud();
+            document.getElementById('nameIn').value = '';
+        }
+    }
+
+    function deleteStaff(index) {
+        if(confirm(`確定移除夥伴「${staffs[index]}」嗎？`)) {
+            staffs.splice(index, 1);
+            syncToCloud();
+        }
+    }
+
+    function syncToCloud() {
+        dbRef.set({
+            staffs: staffs,
+            scheduleData: scheduleData
+        });
+    }
+
+    function updateStaffDisplay() {
+        const listDiv = document.getElementById('staffList');
+        listDiv.innerHTML = staffs.map((s, i) => `
+            <span class="staff-chip" style="border-color:${colorPool[i % colorPool.length]}">
+                ${s} <span class="del-btn" onclick="deleteStaff(${i})">×</span>
+            </span>
+        `).join('');
+    }
+
+    function render() {
+        let mVal = document.getElementById('monthPicker').value;
+        if(!mVal) return;
+        let [y, m] = mVal.split('-');
+        document.getElementById('displayTitle').innerText = `${parseInt(m)}月 排班表`;
+
+        let firstDay = new Date(y, m-1, 1).getDay();
+        let offset = (firstDay === 0) ? 6 : firstDay - 1; 
+        let total = new Date(y, m, 0).getDate();
+        let grid = document.getElementById('grid');
+        grid.innerHTML = '';
+
+        for(let i=0; i<offset; i++) grid.innerHTML += '<div></div>';
+
+        for(let d=1; d<=total; d++) {
+            let key = `${mVal}-${d}`;
+            let box = document.createElement('div');
+            box.className = 'day-box';
+            let html = `<div class="day-num">${d}</div>`;
+            for(let p=1; p<=3; p++) {
+                let sn = scheduleData[key]?.[`p${p}n`] || '';
+                let st = scheduleData[key]?.[`p${p}t`] || '';
+                let staffIdx = staffs.indexOf(sn);
+                let color = staffIdx !== -1 ? colorPool[staffIdx % colorPool.length] : "#888";
+
+                html += `
+                    <div class="slot">
+                        <select class="ui-select" onchange="saveLocalData('${key}','p${p}n',this.value)">
+                            <option value="">- 選人 -</option>
+                            ${staffs.map(s => `<option value="${s}" ${s===sn?'selected':''}>${s}</option>`).join('')}
+                        </select>
+                        <input class="ui-input" type="text" value="${st}" placeholder="時間" 
+                               style="color:${color}; font-weight:bold;"
+                               onblur="saveLocalData('${key}','p${p}t',this.value)">
+                    </div>`;
+            }
+            box.innerHTML = html;
+            grid.appendChild(box);
+        }
+    }
+
+    function saveLocalData(key, field, val) {
+        if(!scheduleData[key]) scheduleData[key] = {};
+        scheduleData[key][field] = val;
+        syncToCloud();
+    }
+
+    function drawAndSave() {
+        const mVal = document.getElementById('monthPicker').value;
+        if(!mVal) return alert("請選擇月份");
+        let [y, m] = mVal.split('-');
+        const canvas = document.getElementById('exportCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 1600; canvas.height = 2200;
+
+        ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#ffffff"; ctx.font = "lighter 80px Arial"; ctx.textAlign = "left";
+        ctx.fillText(`${parseInt(m)}月 排班表`, 120, 180);
+        ctx.fillStyle = "#d32f2f"; ctx.beginPath(); ctx.arc(80, 155, 15, 0, Math.PI*2); ctx.fill();
+
+        let firstDay = new Date(y, m-1, 1).getDay();
+        let offset = (firstDay === 0) ? 6 : firstDay - 1; 
+        let total = new Date(y, m, 0).getDate();
+        const cellW = 205; const cellH = 300; const marginX = 80; const marginY = 350;
+
+        const weeks = ["MON 一","TUE 二","WED 三","THU 四","FRI 五","SAT 六","SUN 日"];
+        ctx.font = "bold 24px Arial"; ctx.textAlign = "center";
+        weeks.forEach((w, i) => {
+            ctx.fillStyle = (i === 5) ? "#43a047" : (i === 6 ? "#d32f2f" : "#555");
+            ctx.fillText(w, marginX + i*cellW + cellW/2, marginY - 40);
+        });
+
+        for(let d=1; d<=total; d++) {
+            let row = Math.floor((d + offset - 1) / 7);
+            let col = (d + offset - 1) % 7;
+            let x = marginX + col*cellW; let y = marginY + row*cellH;
+            ctx.strokeStyle = "#333"; ctx.lineWidth = 1; ctx.strokeRect(x, y, cellW, cellH);
+            ctx.fillStyle = "#43a047"; ctx.font = "30px Arial"; ctx.textAlign = "right";
+            ctx.fillText(d, x + cellW - 20, y + 40);
+
+            let key = `${mVal}-${d}`;
+            ctx.textAlign = "center";
+            for(let p=1; p<=3; p++) {
+                let name = scheduleData[key]?.[`p${p}n`] || "";
+                let time = scheduleData[key]?.[`p${p}t`] || "";
+                if(name) {
+                    let sIdx = staffs.indexOf(name);
+                    let sColor = sIdx !== -1 ? colorPool[sIdx % colorPool.length] : "#ffffff";
+                    ctx.fillStyle = "#ffffff"; ctx.font = "bold 32px Arial";
+                    ctx.fillText(name, x + cellW/2, y + 95 + (p-1)*70);
+                    ctx.fillStyle = sColor; ctx.font = "bold 28px Arial"; 
+                    ctx.fillText(time, x + cellW/2, y + 130 + (p-1)*70);
+                }
+            }
+        }
+        const link = document.createElement('a');
+        link.download = `模Gu模Gu班表_${mVal}.png`;
+        link.href = canvas.toDataURL(); link.click();
+    }
+</script>
+</body>
+</html>
